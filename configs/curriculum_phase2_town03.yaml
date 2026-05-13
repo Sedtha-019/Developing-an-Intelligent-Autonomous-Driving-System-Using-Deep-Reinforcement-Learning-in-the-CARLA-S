@@ -1,0 +1,6 @@
+phases:
+
+  - until_step: 999999999
+    towns: ["Town03"]
+    weather: ["ClearNoon", "CloudyNoon", "WetNoon"]
+    traffic: 20

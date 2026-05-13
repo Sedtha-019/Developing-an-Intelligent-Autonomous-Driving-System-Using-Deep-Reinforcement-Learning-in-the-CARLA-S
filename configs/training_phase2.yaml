@@ -1,0 +1,14 @@
+total_steps: 3000000
+checkpoint_freq: 25000
+
+ppo:
+  learning_rate: 0.00005
+  n_steps: 2048
+  batch_size: 256
+  n_epochs: 4
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.15
+  ent_coef: 0.002
+  target_kl: 0.01
+  max_grad_norm: 0.5

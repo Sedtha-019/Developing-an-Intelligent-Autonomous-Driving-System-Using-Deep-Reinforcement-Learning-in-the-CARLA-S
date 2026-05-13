@@ -1,0 +1,10 @@
+host: localhost
+port: 2000
+
+fixed_delta_seconds: 0.05
+max_episode_steps: 1000
+
+camera:
+  width: 128
+  height: 128
+  fov: 90
