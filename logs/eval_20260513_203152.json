@@ -1,0 +1,202 @@
+{
+  "summary": {
+    "checkpoint": "D:\\RL\\carla_rl_project_v3\\checkpoints\\model_1000000.zip",
+    "n_episodes": 20,
+    "reward_mean": 3.611,
+    "reward_std": 39.183,
+    "reward_min": -41.738,
+    "reward_max": 78.308,
+    "steps_mean": 112.0,
+    "avg_speed_mean_ms": 11.15,
+    "max_speed_mean_ms": 18.75,
+    "completion_rate_pct": 0.0,
+    "collision_rate_pct": 0.0,
+    "offroad_rate_pct": 100.0,
+    "eval_time_s": 51.0,
+    "town": "Town01",
+    "weather": "ClearNoon",
+    "n_traffic": 0
+  },
+  "episodes": [
+    {
+      "episode": 1,
+      "reward": -23.63,
+      "steps": 70,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 18.38,
+      "avg_speed_ms": 9.21
+    },
+    {
+      "episode": 2,
+      "reward": 22.191,
+      "steps": 135,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 21.84,
+      "avg_speed_ms": 14.44
+    },
+    {
+      "episode": 3,
+      "reward": -21.423,
+      "steps": 76,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 15.9,
+      "avg_speed_ms": 9.15
+    },
+    {
+      "episode": 4,
+      "reward": 43.986,
+      "steps": 180,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 25.64,
+      "avg_speed_ms": 16.55
+    },
+    {
+      "episode": 5,
+      "reward": -30.557,
+      "steps": 59,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 15.07,
+      "avg_speed_ms": 7.86
+    },
+    {
+      "episode": 6,
+      "reward": 23.732,
+      "steps": 144,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 22.57,
+      "avg_speed_ms": 15.41
+    },
+    {
+      "episode": 7,
+      "reward": 61.446,
+      "steps": 192,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 21.06,
+      "avg_speed_ms": 14.79
+    },
+    {
+      "episode": 8,
+      "reward": -26.665,
+      "steps": 66,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 16.88,
+      "avg_speed_ms": 8.99
+    },
+    {
+      "episode": 9,
+      "reward": -39.979,
+      "steps": 45,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 13.19,
+      "avg_speed_ms": 5.91
+    },
+    {
+      "episode": 10,
+      "reward": 51.096,
+      "steps": 182,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 21.3,
+      "avg_speed_ms": 14.77
+    },
+    {
+      "episode": 11,
+      "reward": 78.308,
+      "steps": 235,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 23.34,
+      "avg_speed_ms": 13.88
+    },
+    {
+      "episode": 12,
+      "reward": -35.716,
+      "steps": 60,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 10.6,
+      "avg_speed_ms": 6.5
+    },
+    {
+      "episode": 13,
+      "reward": -41.398,
+      "steps": 43,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 12.43,
+      "avg_speed_ms": 5.54
+    },
+    {
+      "episode": 14,
+      "reward": -21.145,
+      "steps": 69,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 18.93,
+      "avg_speed_ms": 9.72
+    },
+    {
+      "episode": 15,
+      "reward": 21.199,
+      "steps": 132,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 21.35,
+      "avg_speed_ms": 14.32
+    },
+    {
+      "episode": 16,
+      "reward": 0.937,
+      "steps": 103,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 22.56,
+      "avg_speed_ms": 13.35
+    },
+    {
+      "episode": 17,
+      "reward": 17.423,
+      "steps": 131,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 24.78,
+      "avg_speed_ms": 15.1
+    },
+    {
+      "episode": 18,
+      "reward": -41.738,
+      "steps": 40,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 11.71,
+      "avg_speed_ms": 5.06
+    },
+    {
+      "episode": 19,
+      "reward": 65.456,
+      "steps": 219,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 22.21,
+      "avg_speed_ms": 14.62
+    },
+    {
+      "episode": 20,
+      "reward": -31.308,
+      "steps": 60,
+      "termination": "off_road",
+      "collided": false,
+      "max_speed_ms": 15.17,
+      "avg_speed_ms": 7.91
+    }
+  ]
+}

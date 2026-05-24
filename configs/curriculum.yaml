@@ -1,6 +1,6 @@
 phases:
 
-  - until_step: 1000000
+  - until_step: 2500000
     towns: ["Town01"]
     weather: ["ClearNoon"]
     traffic: 0

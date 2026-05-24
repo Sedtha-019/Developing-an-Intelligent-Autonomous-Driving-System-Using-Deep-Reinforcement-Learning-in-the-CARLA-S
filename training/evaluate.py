@@ -8,6 +8,7 @@ Usage (from project root):
 """
 
 import argparse
+import random
 import sys
 import time
 import json
@@ -223,10 +224,38 @@ def parse_args() -> argparse.Namespace:
         help="Save per-episode JSON results to logs/eval_<timestamp>.json.",
     )
     p.add_argument(
+        "--seed", type=int, default=None,
+        help="Seed for spawn-point selection. Default (None) uses system "
+             "entropy so each episode starts on a random road.",
+    )
+    p.add_argument(
         "--no-render", dest="render", action="store_false",
         help="Skip any rendering hooks (default: no rendering).",
     )
     p.set_defaults(render=False)
+    p.add_argument(
+        "--video", action="store_true",
+        help="Record an MP4 per episode from chase-camera angles attached to "
+             "the ego vehicle. Files land in --video-dir.",
+    )
+    p.add_argument(
+        "--video-angles", type=str, default="chase",
+        help="Comma-separated angles to record: chase, front, top "
+             "(default: chase).",
+    )
+    p.add_argument(
+        "--video-fps", type=int, default=20,
+        help="Output video FPS. Default 20 matches the sim 0.05s dt (1:1 "
+             "real-time playback).",
+    )
+    p.add_argument(
+        "--video-dir", type=str, default=None,
+        help="Directory for recorded MP4s. Defaults to logs/videos.",
+    )
+    p.add_argument(
+        "--video-res", type=str, default="480x270",
+        help="Per-camera recording resolution WxH (default: 480x270).",
+    )
     return p.parse_args()
 
 
@@ -276,8 +305,27 @@ def main() -> None:
     # always returns our fixed eval values regardless of global_step.
     eval_traffic = args.traffic
 
+    video_dir = Path(args.video_dir) if args.video_dir else (log_dir / "videos")
+    try:
+        vw, vh = (int(x) for x in args.video_res.lower().split("x"))
+    except ValueError:
+        sys.exit(f"[error] --video-res must look like 480x270, got {args.video_res!r}")
+    video_angles = tuple(
+        a.strip() for a in args.video_angles.split(",") if a.strip()
+    )
+
+    if args.video:
+        print(f"  Recording    : {','.join(video_angles)} @ {vw}x{vh} {args.video_fps}fps → {video_dir}")
+
     def make_env():
-        env = CarlaEnv(global_step=0)
+        env = CarlaEnv(
+            global_step=0,
+            record_video=args.video,
+            video_dir=str(video_dir),
+            video_angles=video_angles,
+            video_resolution=(vw, vh),
+            video_fps=args.video_fps,
+        )
         # Override scenario selection so resets don't randomise town/weather/NPC
         env.scenario.select = lambda step: (eval_town, args.weather, eval_traffic)
         return env
@@ -293,6 +341,13 @@ def main() -> None:
     print("Loading policy …")
     model = PPO.load(str(checkpoint_path), env=vec_env)
     print("Policy loaded. Starting evaluation …\n")
+
+    # PPO.load restores the seed saved with the checkpoint, which reseeds
+    # Python's `random` module deterministically. CarlaEnv.reset() picks the
+    # ego spawn via random.shuffle(spawn_points), so without reseeding here
+    # every evaluation run would start on the same road. Reseed with fresh
+    # entropy (or args.seed for a reproducible run).
+    random.seed(args.seed)
 
     # ── run ─────────────────────────────────────────────────────────────────
     t0 = time.time()

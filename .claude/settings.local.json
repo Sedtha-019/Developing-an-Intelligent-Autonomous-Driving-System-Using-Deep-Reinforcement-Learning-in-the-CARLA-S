@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(python -c \"import ast; ast.parse\\(open\\('env/carla_env.py'\\).read\\(\\)\\); ast.parse\\(open\\('training/evaluate.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
+    ]
+  }
+}

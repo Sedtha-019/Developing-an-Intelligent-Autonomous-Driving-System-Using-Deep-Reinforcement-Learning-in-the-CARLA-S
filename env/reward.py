@@ -1,3 +1,7 @@
+LANE_HALF_WIDTH_M = 1.75
+TERMINAL_PENALTY = 200.0
+
+
 def compute_reward(vehicle, world, collided, off_road):
 
     vel = vehicle.get_velocity()
@@ -9,11 +13,12 @@ def compute_reward(vehicle, world, collided, off_road):
 
     loc = vehicle.get_location()
     wp = world.get_map().get_waypoint(loc, project_to_road=True)
-    lat_dist = loc.distance(wp.transform.location) if wp else 2.0
+    lat_dist = loc.distance(wp.transform.location) if wp else 2.0 * LANE_HALF_WIDTH_M
 
-    reward = 0.05 * forward_speed - 0.1 * lat_dist
+    lat_norm = min(lat_dist / LANE_HALF_WIDTH_M, 2.0)
+    reward = 0.05 * forward_speed - 0.5 * lat_norm * lat_norm
 
     if collided or off_road:
-        reward -= 50.0
+        reward -= TERMINAL_PENALTY
 
     return reward
