@@ -1,3 +1,4 @@
+import math
 import random
 import time
 from pathlib import Path
@@ -8,6 +9,10 @@ import carla
 import cv2
 import numpy as np
 import yaml
+
+
+NPC_SENSE_RANGE_M = 30.0
+NPC_LANE_HALF_WIDTH_M = 3.0
 
 from .observation import ObservationPipeline
 from .frame_stack import FrameStack
@@ -34,6 +39,9 @@ class CarlaEnv(gym.Env):
     def __init__(
         self,
         global_step=0,
+        town=None,
+        weather=None,
+        traffic_count=None,
         record_video=False,
         video_dir="logs/videos",
         video_angles=("chase",),
@@ -51,13 +59,26 @@ class CarlaEnv(gym.Env):
         self.cam_fov = cfg["camera"]["fov"]
         self.fixed_dt = cfg.get("fixed_delta_seconds", 0.05)
         self.max_episode_steps = cfg.get("max_episode_steps", 1000)
+        self.stuck_speed_threshold = cfg.get("stuck_speed_threshold", 0.5)
+        self.stuck_timeout_steps = cfg.get(
+            "stuck_timeout_steps", int(10.0 / self.fixed_dt)
+        )
 
         self.client = carla.Client(cfg["host"], cfg["port"])
         self.client.set_timeout(20.0)
 
         self.obs_pipe = ObservationPipeline()
         self.frame_stack = FrameStack()
-        self.scenario = ScenarioManager("configs/curriculum.yaml")
+
+        self.fixed_town = town
+        self.fixed_weather = weather
+        self.fixed_traffic = traffic_count
+        if town is None:
+            self.scenario = ScenarioManager("configs/curriculum.yaml")
+        else:
+            self.scenario = None
+
+        self._safe_spawn_indices = None
 
         self.global_step = global_step
         self.episode_step = 0
@@ -70,6 +91,8 @@ class CarlaEnv(gym.Env):
         self.camera = None
         self.collision_sensor = None
         self.image = None
+        self.prev_steer = 0.0
+        self.stuck_steps = 0
 
         self.record_video = bool(record_video)
         self.video_dir = Path(video_dir)
@@ -86,8 +109,16 @@ class CarlaEnv(gym.Env):
 
         self.observation_space = spaces.Dict({
             "image": spaces.Box(0, 1, (4, 84, 84), dtype=np.float32),
-            "state": spaces.Box(-np.inf, np.inf, (1,), dtype=np.float32),
+            "state": spaces.Box(-np.inf, np.inf, (6,), dtype=np.float32),
         })
+
+        self.scene = {
+            "forward_speed": 0.0,
+            "lateral": 0.0,
+            "heading_dev": 0.0,
+            "npc_dist": NPC_SENSE_RANGE_M,
+            "npc_rel_speed": 0.0,
+        }
 
         self.action_space = spaces.Box(
             low=np.array([-1, 0, 0], dtype=np.float32),
@@ -231,7 +262,12 @@ class CarlaEnv(gym.Env):
         self._close_video()
         self._destroy_actors()
 
-        town, weather, traffic_count = self.scenario.select(self.global_step)
+        if self.scenario is not None:
+            town, weather, traffic_count = self.scenario.select(self.global_step)
+        else:
+            town = self.fixed_town
+            weather = self.fixed_weather
+            traffic_count = self.fixed_traffic
 
         if town != self.current_town or self.world is None:
             self.world = self.client.load_world(town)
@@ -243,8 +279,9 @@ class CarlaEnv(gym.Env):
         bp_lib = self.world.get_blueprint_library()
 
         spawn_points = self.world.get_map().get_spawn_points()
-        random.shuffle(spawn_points)
-        ego_spawn = spawn_points[0]
+        safe_indices = self._get_safe_spawn_indices(spawn_points)
+        ego_idx = random.choice(safe_indices)
+        ego_spawn = spawn_points[ego_idx]
 
         bp = bp_lib.filter("model3")[0]
         self.vehicle = self.world.spawn_actor(bp, ego_spawn)
@@ -276,7 +313,7 @@ class CarlaEnv(gym.Env):
 
         self._spawn_recording_cameras(bp_lib)
 
-        npc_spawns = list(spawn_points[1:])
+        npc_spawns = [sp for i, sp in enumerate(spawn_points) if i != ego_idx]
         random.shuffle(npc_spawns)
         self._spawn_traffic(traffic_count, npc_spawns)
 
@@ -292,6 +329,10 @@ class CarlaEnv(gym.Env):
         self._open_video()
         self._write_video_frame()
 
+        self.prev_steer = 0.0
+        self.stuck_steps = 0
+
+        self._compute_scene_metrics()
         obs = self._get_obs()
         obs["image"] = self.frame_stack.reset(obs["image"])
 
@@ -299,8 +340,109 @@ class CarlaEnv(gym.Env):
 
     def _get_obs(self):
         img = self.obs_pipe.process_image(self.image)
-        state = self.obs_pipe.vector_state(self.vehicle)
+        state = np.array([
+            self.scene["forward_speed"],
+            self.scene["lateral"],
+            self.scene["heading_dev"],
+            self.prev_steer,
+            self.scene["npc_dist"],
+            self.scene["npc_rel_speed"],
+        ], dtype=np.float32)
         return {"image": img, "state": state}
+
+    def _compute_scene_metrics(self):
+        transform = self.vehicle.get_transform()
+        loc = transform.location
+        fwd = transform.get_forward_vector()
+        right = transform.get_right_vector()
+
+        vel = self.vehicle.get_velocity()
+        forward_speed = vel.x * fwd.x + vel.y * fwd.y
+
+        wp = self.world.get_map().get_waypoint(loc, project_to_road=True)
+        if wp is not None:
+            wp_loc = wp.transform.location
+            wp_right = wp.transform.get_right_vector()
+            wp_fwd = wp.transform.get_forward_vector()
+            dx = loc.x - wp_loc.x
+            dy = loc.y - wp_loc.y
+            lateral = dx * wp_right.x + dy * wp_right.y
+            cos_a = fwd.x * wp_fwd.x + fwd.y * wp_fwd.y
+            sin_a = fwd.x * wp_fwd.y - fwd.y * wp_fwd.x
+            heading_dev = math.atan2(sin_a, cos_a)
+        else:
+            lateral = 0.0
+            heading_dev = 0.0
+
+        npc_dist = NPC_SENSE_RANGE_M
+        npc_rel_speed = 0.0
+        ego_id = self.vehicle.id
+        for npc in self.world.get_actors().filter("vehicle.*"):
+            if npc.id == ego_id:
+                continue
+            npc_loc = npc.get_location()
+            dx = npc_loc.x - loc.x
+            dy = npc_loc.y - loc.y
+            fwd_dist = dx * fwd.x + dy * fwd.y
+            if fwd_dist <= 0.0 or fwd_dist >= npc_dist:
+                continue
+            right_dist = dx * right.x + dy * right.y
+            if abs(right_dist) > NPC_LANE_HALF_WIDTH_M:
+                continue
+            npc_dist = fwd_dist
+            npc_vel = npc.get_velocity()
+            npc_fwd_speed = npc_vel.x * fwd.x + npc_vel.y * fwd.y
+            npc_rel_speed = npc_fwd_speed - forward_speed
+
+        self.scene = {
+            "forward_speed": forward_speed,
+            "lateral": lateral,
+            "heading_dev": heading_dev,
+            "npc_dist": npc_dist,
+            "npc_rel_speed": npc_rel_speed,
+        }
+
+    def _is_safe_spawn(self, spawn_tf, lookahead_m=15.0, max_heading_change_deg=30.0):
+        carla_map = self.world.get_map()
+        wp = carla_map.get_waypoint(
+            spawn_tf.location,
+            project_to_road=True,
+            lane_type=carla.LaneType.Driving,
+        )
+        if wp is None or wp.is_junction:
+            return False
+
+        step = 3.0
+        steps_to_check = int(lookahead_m / step)
+        prev_yaw = wp.transform.rotation.yaw
+        total_heading_change = 0.0
+
+        for _ in range(steps_to_check):
+            nexts = wp.next(step)
+            if not nexts:
+                return True
+            wp = nexts[0]
+            if wp.is_junction:
+                return False
+            cur_yaw = wp.transform.rotation.yaw
+            delta = (cur_yaw - prev_yaw + 180.0) % 360.0 - 180.0
+            total_heading_change += abs(delta)
+            prev_yaw = cur_yaw
+
+        return total_heading_change <= max_heading_change_deg
+
+    def _get_safe_spawn_indices(self, all_spawns):
+        if self._safe_spawn_indices is not None:
+            return self._safe_spawn_indices
+
+        safe = [i for i, sp in enumerate(all_spawns) if self._is_safe_spawn(sp)]
+        if not safe:
+            print(f"[CarlaEnv] WARNING: no safe spawn points found, using all {len(all_spawns)}")
+            safe = list(range(len(all_spawns)))
+        else:
+            print(f"[CarlaEnv] {len(safe)}/{len(all_spawns)} safe spawn points selected for ego")
+        self._safe_spawn_indices = safe
+        return safe
 
     def _is_off_road(self):
         loc = self.vehicle.get_location()
@@ -323,12 +465,30 @@ class CarlaEnv(gym.Env):
 
         self._write_video_frame()
 
+        self._compute_scene_metrics()
         obs = self._get_obs()
         obs["image"] = self.frame_stack.append(obs["image"])
 
         off_road = self._is_off_road()
-        terminated = bool(self.collided) or off_road
-        reward = compute_reward(self.vehicle, self.world, self.collided, off_road)
+
+        speed_mag = abs(self.scene["forward_speed"])
+        if speed_mag < self.stuck_speed_threshold:
+            self.stuck_steps += 1
+        else:
+            self.stuck_steps = 0
+        stuck = self.stuck_steps >= self.stuck_timeout_steps
+
+        terminated = bool(self.collided) or off_road or stuck
+        reward = compute_reward(
+            forward_speed=self.scene["forward_speed"],
+            lateral=self.scene["lateral"],
+            npc_dist=self.scene["npc_dist"],
+            collided=self.collided,
+            off_road=off_road or stuck,
+            steer=float(steer),
+            prev_steer=self.prev_steer,
+        )
+        self.prev_steer = float(steer)
 
         self.episode_step += 1
         self.global_step += 1

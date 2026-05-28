@@ -1,16 +1,25 @@
 phases:
 
-  - until_step: 2500000
-    towns: ["Town01"]
-    weather: ["ClearNoon"]
+  - name: p1
+    town: Town01
+    weather: ClearNoon
     traffic: 0
+    target_step: 1000000
 
-  - until_step: 3000000
-    towns: ["Town01","Town03"]
-    weather: ["ClearNoon","CloudyNoon","WetNoon"]
-    traffic: 20
+  - name: p2
+    town: Town01
+    weather: ClearNoon
+    traffic: 10
+    target_step: 1700000
 
-  - until_step: 5000000
-    towns: ["Town01","Town02","Town03","Town05"]
-    weather: ["ClearNoon","CloudyNoon","WetNoon","SoftRainNoon"]
-    traffic: 50
+  - name: p3
+    town: Town03
+    weather: ClearNoon
+    traffic: 0
+    target_step: 2500000
+
+  - name: p4
+    town: Town03
+    weather: ClearNoon
+    traffic: 10
+    target_step: 3500000

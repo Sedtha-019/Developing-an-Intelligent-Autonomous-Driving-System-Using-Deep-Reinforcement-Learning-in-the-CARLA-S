@@ -286,7 +286,7 @@ def main() -> None:
         )
 
     # ── resolve town ────────────────────────────────────────────────────────
-    eval_town = args.town or cfg_cur["phases"][0]["towns"][0]
+    eval_town = args.town or cfg_cur["phases"][0]["town"]
 
     print(f"\n{'─'*52}")
     print(f"  CARLA PPO — evaluation run")
@@ -299,10 +299,9 @@ def main() -> None:
     print(f"  NPC traffic  : {args.traffic}")
     print(f"{'─'*52}\n")
 
-    # ── lock curriculum to eval settings for every episode reset ───────────
-    # CarlaEnv reads configs itself and uses ScenarioManager for town/weather/
-    # traffic. We monkey-patch ScenarioManager.select after construction so it
-    # always returns our fixed eval values regardless of global_step.
+    # ── lock eval env to chosen town/weather/traffic for every reset ───────
+    # CarlaEnv takes town/weather/traffic_count constructor args; passing them
+    # makes self.scenario = None so resets won't randomise the scenario.
     eval_traffic = args.traffic
 
     video_dir = Path(args.video_dir) if args.video_dir else (log_dir / "videos")
@@ -318,17 +317,17 @@ def main() -> None:
         print(f"  Recording    : {','.join(video_angles)} @ {vw}x{vh} {args.video_fps}fps → {video_dir}")
 
     def make_env():
-        env = CarlaEnv(
+        return CarlaEnv(
             global_step=0,
+            town=eval_town,
+            weather=args.weather,
+            traffic_count=eval_traffic,
             record_video=args.video,
             video_dir=str(video_dir),
             video_angles=video_angles,
             video_resolution=(vw, vh),
             video_fps=args.video_fps,
         )
-        # Override scenario selection so resets don't randomise town/weather/NPC
-        env.scenario.select = lambda step: (eval_town, args.weather, eval_traffic)
-        return env
 
     vec_env = DummyVecEnv([make_env])
 

@@ -1,4 +1,4 @@
-total_steps: 2500000
+total_steps: 2000000
 checkpoint_freq: 50000
 
 ppo:
