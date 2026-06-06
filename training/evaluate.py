@@ -112,6 +112,10 @@ def run_episodes(
             termination = "collision"
         elif truncated:
             termination = "timeout"
+        elif raw_env.wrong_lane:
+            termination = "wrong_lane"
+        elif raw_env.stuck_steps >= raw_env.stuck_timeout_steps:
+            termination = "stuck"
         else:
             termination = "off_road"
 
@@ -149,24 +153,27 @@ def print_summary(results: list[dict], checkpoint_path: Path) -> dict:
     terminations = [r["termination"]  for r in results]
 
     n = len(results)
-    n_timeout   = terminations.count("timeout")
-    n_collision = terminations.count("collision")
-    n_offroad   = terminations.count("off_road")
-    n_collided  = sum(1 for r in results if r.get("collided", False))
+    n_timeout    = terminations.count("timeout")
+    n_collision  = terminations.count("collision")
+    n_offroad    = terminations.count("off_road")
+    n_wrong_lane = terminations.count("wrong_lane")
+    n_stuck      = terminations.count("stuck")
 
     summary = {
-        "checkpoint":         str(checkpoint_path),
-        "n_episodes":         n,
-        "reward_mean":        round(float(np.mean(rewards)),  3),
-        "reward_std":         round(float(np.std(rewards)),   3),
-        "reward_min":         round(float(np.min(rewards)),   3),
-        "reward_max":         round(float(np.max(rewards)),   3),
-        "steps_mean":         round(float(np.mean(steps)),    1),
-        "avg_speed_mean_ms":  round(float(np.mean(avg_speeds)), 2),
-        "max_speed_mean_ms":  round(float(np.mean(max_speeds)), 2),
-        "completion_rate_pct": round(100 * n_timeout   / n, 1),
-        "collision_rate_pct":  round(100 * n_collision / n, 1),
-        "offroad_rate_pct":    round(100 * n_offroad   / n, 1),
+        "checkpoint":           str(checkpoint_path),
+        "n_episodes":           n,
+        "reward_mean":          round(float(np.mean(rewards)),  3),
+        "reward_std":           round(float(np.std(rewards)),   3),
+        "reward_min":           round(float(np.min(rewards)),   3),
+        "reward_max":           round(float(np.max(rewards)),   3),
+        "steps_mean":           round(float(np.mean(steps)),    1),
+        "avg_speed_mean_ms":    round(float(np.mean(avg_speeds)), 2),
+        "max_speed_mean_ms":    round(float(np.mean(max_speeds)), 2),
+        "completion_rate_pct":  round(100 * n_timeout    / n, 1),
+        "collision_rate_pct":   round(100 * n_collision  / n, 1),
+        "offroad_rate_pct":     round(100 * n_offroad    / n, 1),
+        "wrong_lane_rate_pct":  round(100 * n_wrong_lane / n, 1),
+        "stuck_rate_pct":       round(100 * n_stuck      / n, 1),
     }
 
     sep = "─" * 52
@@ -181,6 +188,8 @@ def print_summary(results: list[dict], checkpoint_path: Path) -> dict:
     print(f"  Completion   : {n_timeout:>3}/{n}  ({summary['completion_rate_pct']}%)")
     print(f"  Collisions   : {n_collision:>3}/{n}  ({summary['collision_rate_pct']}%)")
     print(f"  Off-road     : {n_offroad:>3}/{n}  ({summary['offroad_rate_pct']}%)")
+    print(f"  Wrong lane   : {n_wrong_lane:>3}/{n}  ({summary['wrong_lane_rate_pct']}%)")
+    print(f"  Stuck        : {n_stuck:>3}/{n}  ({summary['stuck_rate_pct']}%)")
     print(sep)
 
     return summary

@@ -1,25 +1,24 @@
 phases:
-
   - name: p1
     town: Town01
     weather: ClearNoon
     traffic: 0
-    target_step: 1000000
+    target_step: 2000000
 
   - name: p2
     town: Town01
     weather: ClearNoon
     traffic: 10
-    target_step: 1700000
+    target_step: 2700000
 
   - name: p3
     town: Town03
     weather: ClearNoon
     traffic: 0
-    target_step: 2500000
+    target_step: 3700000
 
   - name: p4
     town: Town03
     weather: ClearNoon
     traffic: 10
-    target_step: 3500000
+    target_step: 4300000

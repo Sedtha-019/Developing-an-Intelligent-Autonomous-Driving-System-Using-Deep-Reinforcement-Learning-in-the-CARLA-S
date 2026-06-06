@@ -83,6 +83,7 @@ class CarlaEnv(gym.Env):
         self.global_step = global_step
         self.episode_step = 0
         self.collided = False
+        self.wrong_lane = False
         self.current_town = None
 
         self.world = None
@@ -270,7 +271,9 @@ class CarlaEnv(gym.Env):
             traffic_count = self.fixed_traffic
 
         if town != self.current_town or self.world is None:
+            self.client.set_timeout(120.0)   # map load can take 60-90 s
             self.world = self.client.load_world(town)
+            self.client.set_timeout(20.0)    # restore normal timeout
             self.current_town = town
 
         self._setup_sync()
@@ -370,9 +373,11 @@ class CarlaEnv(gym.Env):
             cos_a = fwd.x * wp_fwd.x + fwd.y * wp_fwd.y
             sin_a = fwd.x * wp_fwd.y - fwd.y * wp_fwd.x
             heading_dev = math.atan2(sin_a, cos_a)
+            self.wrong_lane = cos_a < -0.5
         else:
             lateral = 0.0
             heading_dev = 0.0
+            self.wrong_lane = False
 
         npc_dist = NPC_SENSE_RANGE_M
         npc_rel_speed = 0.0
@@ -478,13 +483,13 @@ class CarlaEnv(gym.Env):
             self.stuck_steps = 0
         stuck = self.stuck_steps >= self.stuck_timeout_steps
 
-        terminated = bool(self.collided) or off_road or stuck
+        terminated = bool(self.collided) or off_road or stuck or self.wrong_lane
         reward = compute_reward(
             forward_speed=self.scene["forward_speed"],
             lateral=self.scene["lateral"],
             npc_dist=self.scene["npc_dist"],
             collided=self.collided,
-            off_road=off_road or stuck,
+            off_road=off_road or stuck or self.wrong_lane,
             steer=float(steer),
             prev_steer=self.prev_steer,
         )
