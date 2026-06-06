@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(python -c \"import ast; ast.parse\\(open\\('env/carla_env.py'\\).read\\(\\)\\); ast.parse\\(open\\('training/evaluate.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(Get-Content *)",
+      "Bash(PowerShell *)",
+      "PowerShell(\"{0:N0}\" -f \\(Get-ChildItem -Path \"D:\\\\RL\\\\carla_rl_project_v3\\\\logs\\\\videos\" -File | Measure-Object -Sum -Property Length | Select-Object -ExpandProperty Sum\\))",
+      "PowerShell(\"{0:N0}\" -f \\(Get-ChildItem -Path \"D:\\\\RL\\\\carla_rl_project_v3\\\\checkpoints\" -File | Measure-Object -Sum -Property Length | Select-Object -ExpandProperty Sum\\))",
+      "Bash(dir \"D:\\\\RL\\\\carla_rl_project_v3\\\\logs\\\\videos\" /b)",
+      "Bash(findstr /i \"town\")"
+    ]
+  }
+}

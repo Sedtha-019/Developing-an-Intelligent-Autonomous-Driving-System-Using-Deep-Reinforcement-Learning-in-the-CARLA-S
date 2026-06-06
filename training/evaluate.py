@@ -8,6 +8,7 @@ Usage (from project root):
 """
 
 import argparse
+import random
 import sys
 import time
 import json
@@ -111,6 +112,10 @@ def run_episodes(
             termination = "collision"
         elif truncated:
             termination = "timeout"
+        elif raw_env.wrong_lane:
+            termination = "wrong_lane"
+        elif raw_env.stuck_steps >= raw_env.stuck_timeout_steps:
+            termination = "stuck"
         else:
             termination = "off_road"
 
@@ -148,24 +153,27 @@ def print_summary(results: list[dict], checkpoint_path: Path) -> dict:
     terminations = [r["termination"]  for r in results]
 
     n = len(results)
-    n_timeout   = terminations.count("timeout")
-    n_collision = terminations.count("collision")
-    n_offroad   = terminations.count("off_road")
-    n_collided  = sum(1 for r in results if r.get("collided", False))
+    n_timeout    = terminations.count("timeout")
+    n_collision  = terminations.count("collision")
+    n_offroad    = terminations.count("off_road")
+    n_wrong_lane = terminations.count("wrong_lane")
+    n_stuck      = terminations.count("stuck")
 
     summary = {
-        "checkpoint":         str(checkpoint_path),
-        "n_episodes":         n,
-        "reward_mean":        round(float(np.mean(rewards)),  3),
-        "reward_std":         round(float(np.std(rewards)),   3),
-        "reward_min":         round(float(np.min(rewards)),   3),
-        "reward_max":         round(float(np.max(rewards)),   3),
-        "steps_mean":         round(float(np.mean(steps)),    1),
-        "avg_speed_mean_ms":  round(float(np.mean(avg_speeds)), 2),
-        "max_speed_mean_ms":  round(float(np.mean(max_speeds)), 2),
-        "completion_rate_pct": round(100 * n_timeout   / n, 1),
-        "collision_rate_pct":  round(100 * n_collision / n, 1),
-        "offroad_rate_pct":    round(100 * n_offroad   / n, 1),
+        "checkpoint":           str(checkpoint_path),
+        "n_episodes":           n,
+        "reward_mean":          round(float(np.mean(rewards)),  3),
+        "reward_std":           round(float(np.std(rewards)),   3),
+        "reward_min":           round(float(np.min(rewards)),   3),
+        "reward_max":           round(float(np.max(rewards)),   3),
+        "steps_mean":           round(float(np.mean(steps)),    1),
+        "avg_speed_mean_ms":    round(float(np.mean(avg_speeds)), 2),
+        "max_speed_mean_ms":    round(float(np.mean(max_speeds)), 2),
+        "completion_rate_pct":  round(100 * n_timeout    / n, 1),
+        "collision_rate_pct":   round(100 * n_collision  / n, 1),
+        "offroad_rate_pct":     round(100 * n_offroad    / n, 1),
+        "wrong_lane_rate_pct":  round(100 * n_wrong_lane / n, 1),
+        "stuck_rate_pct":       round(100 * n_stuck      / n, 1),
     }
 
     sep = "─" * 52
@@ -180,6 +188,8 @@ def print_summary(results: list[dict], checkpoint_path: Path) -> dict:
     print(f"  Completion   : {n_timeout:>3}/{n}  ({summary['completion_rate_pct']}%)")
     print(f"  Collisions   : {n_collision:>3}/{n}  ({summary['collision_rate_pct']}%)")
     print(f"  Off-road     : {n_offroad:>3}/{n}  ({summary['offroad_rate_pct']}%)")
+    print(f"  Wrong lane   : {n_wrong_lane:>3}/{n}  ({summary['wrong_lane_rate_pct']}%)")
+    print(f"  Stuck        : {n_stuck:>3}/{n}  ({summary['stuck_rate_pct']}%)")
     print(sep)
 
     return summary
@@ -223,10 +233,38 @@ def parse_args() -> argparse.Namespace:
         help="Save per-episode JSON results to logs/eval_<timestamp>.json.",
     )
     p.add_argument(
+        "--seed", type=int, default=None,
+        help="Seed for spawn-point selection. Default (None) uses system "
+             "entropy so each episode starts on a random road.",
+    )
+    p.add_argument(
         "--no-render", dest="render", action="store_false",
         help="Skip any rendering hooks (default: no rendering).",
     )
     p.set_defaults(render=False)
+    p.add_argument(
+        "--video", action="store_true",
+        help="Record an MP4 per episode from chase-camera angles attached to "
+             "the ego vehicle. Files land in --video-dir.",
+    )
+    p.add_argument(
+        "--video-angles", type=str, default="chase",
+        help="Comma-separated angles to record: chase, front, top "
+             "(default: chase).",
+    )
+    p.add_argument(
+        "--video-fps", type=int, default=20,
+        help="Output video FPS. Default 20 matches the sim 0.05s dt (1:1 "
+             "real-time playback).",
+    )
+    p.add_argument(
+        "--video-dir", type=str, default=None,
+        help="Directory for recorded MP4s. Defaults to logs/videos.",
+    )
+    p.add_argument(
+        "--video-res", type=str, default="480x270",
+        help="Per-camera recording resolution WxH (default: 480x270).",
+    )
     return p.parse_args()
 
 
@@ -257,7 +295,7 @@ def main() -> None:
         )
 
     # ── resolve town ────────────────────────────────────────────────────────
-    eval_town = args.town or cfg_cur["phases"][0]["towns"][0]
+    eval_town = args.town or cfg_cur["phases"][0]["town"]
 
     print(f"\n{'─'*52}")
     print(f"  CARLA PPO — evaluation run")
@@ -270,17 +308,35 @@ def main() -> None:
     print(f"  NPC traffic  : {args.traffic}")
     print(f"{'─'*52}\n")
 
-    # ── lock curriculum to eval settings for every episode reset ───────────
-    # CarlaEnv reads configs itself and uses ScenarioManager for town/weather/
-    # traffic. We monkey-patch ScenarioManager.select after construction so it
-    # always returns our fixed eval values regardless of global_step.
+    # ── lock eval env to chosen town/weather/traffic for every reset ───────
+    # CarlaEnv takes town/weather/traffic_count constructor args; passing them
+    # makes self.scenario = None so resets won't randomise the scenario.
     eval_traffic = args.traffic
 
+    video_dir = Path(args.video_dir) if args.video_dir else (log_dir / "videos")
+    try:
+        vw, vh = (int(x) for x in args.video_res.lower().split("x"))
+    except ValueError:
+        sys.exit(f"[error] --video-res must look like 480x270, got {args.video_res!r}")
+    video_angles = tuple(
+        a.strip() for a in args.video_angles.split(",") if a.strip()
+    )
+
+    if args.video:
+        print(f"  Recording    : {','.join(video_angles)} @ {vw}x{vh} {args.video_fps}fps → {video_dir}")
+
     def make_env():
-        env = CarlaEnv(global_step=0)
-        # Override scenario selection so resets don't randomise town/weather/NPC
-        env.scenario.select = lambda step: (eval_town, args.weather, eval_traffic)
-        return env
+        return CarlaEnv(
+            global_step=0,
+            town=eval_town,
+            weather=args.weather,
+            traffic_count=eval_traffic,
+            record_video=args.video,
+            video_dir=str(video_dir),
+            video_angles=video_angles,
+            video_resolution=(vw, vh),
+            video_fps=args.video_fps,
+        )
 
     vec_env = DummyVecEnv([make_env])
 
@@ -293,6 +349,13 @@ def main() -> None:
     print("Loading policy …")
     model = PPO.load(str(checkpoint_path), env=vec_env)
     print("Policy loaded. Starting evaluation …\n")
+
+    # PPO.load restores the seed saved with the checkpoint, which reseeds
+    # Python's `random` module deterministically. CarlaEnv.reset() picks the
+    # ego spawn via random.shuffle(spawn_points), so without reseeding here
+    # every evaluation run would start on the same road. Reseed with fresh
+    # entropy (or args.seed for a reproducible run).
+    random.seed(args.seed)
 
     # ── run ─────────────────────────────────────────────────────────────────
     t0 = time.time()

@@ -1,450 +1,232 @@
-# CARLA Reinforcement Learning Project (v3)
+# CARLA RL Autonomous Driving (v3)
 
-End-to-end PPO training for a CARLA self-driving agent on a single laptop GPU.
+End-to-end PPO agent for autonomous driving in CARLA 0.9.15. Learns directly from raw sensor data (camera + kinematic state) using a 4-phase curriculum — from simple lane-keeping on Town01 to navigating traffic on the more complex Town03.
 
-- Algorithm: PPO (Stable-Baselines3) with multi-input policy (image + speed)
-- Vision: 4-frame grayscale stack at 84x84, fed to a Nature-CNN feature extractor
-- Simulator: CARLA 0.9.15+ in synchronous mode, single training environment
-- Curriculum: town / weather / NPC traffic switching across phases up to 5M steps
-- Checkpointing: every 500k steps, with VecNormalize statistics saved alongside
+**Algorithm:** PPO (Stable-Baselines3) · **Vision:** 4-frame grayscale stack (84×84) · **Hardware target:** RTX 4060 8 GB laptop, single env
 
 ---
 
-## 1. Project layout
+## Demo
 
-```
-carla_rl_project_v3/
-|
-+-- configs/
-|   +-- training.yaml         # PPO + total steps + checkpoint frequency
-|   +-- environment.yaml      # CARLA host/port, sync settings, camera, episode length
-|   +-- curriculum.yaml       # Town / weather / traffic per phase
-|
-+-- env/
-|   +-- carla_env.py          # gymnasium env: sync ticks, termination, actor cleanup
-|   +-- observation.py        # image preprocessing + speed vector
-|   +-- frame_stack.py        # 4-frame stack
-|   +-- reward.py             # speed reward + collision penalty
-|   +-- scenario_manager.py   # picks town/weather/traffic per phase
-|   +-- weather_manager.py    # applies weather preset
-|
-+-- agents/
-|   +-- feature_extractor.py  # Nature-CNN + speed MLP fusion -> 256 features
-|
-+-- training/
-|   +-- train.py              # First-time training entry point
-|   +-- resume.py             # Resume from latest checkpoint
-|   +-- callbacks.py          # Periodic checkpoint + VecNormalize save
-|
-+-- checkpoints/              # model_<steps>.zip + vecnormalize.pkl
-+-- logs/                     # TensorBoard logs
-+-- requirements.txt
-+-- README.md
-```
+**Town01 — Phase 1 & 2** (lane-keeping + traffic on simple map)
+
+<video src="logs/videos/Town01-1.mp4" controls width="720"></video>
+
+**Town03 — Phase 3 & 4** (generalization to complex urban layout + traffic)
+
+<video src="logs/videos/town03-1.mp4" controls width="720"></video>
+
+> Agent is running the learned policy — no autopilot.
 
 ---
 
-## 2. Hardware target
+## Architecture
 
-This project is sized for a laptop class GPU.
+```
+Observation (Dict)
+  ├── image  (4, 84, 84) float32   ← 4-frame grayscale stack from 128×128 RGB camera
+  └── state  (6,)        float32   ← speed, lateral offset, heading dev, prev steer,
+                                      nearest NPC dist, nearest NPC rel speed
 
-| Component            | Recommended           |
-|----------------------|-----------------------|
-| GPU                  | RTX 4060 (8 GB) or better |
-| RAM                  | 16 GB                 |
-| Disk                 | SSD, ~30 GB free      |
-| OS                   | Windows 10/11 or Linux |
+MultiModalExtractor
+  ├── Nature-CNN  (4,84,84) → Conv[32,64,64] → Flatten(3136) ──┐
+  └── State MLP   (6,)      → Linear(64)                       ┤→ Linear(3200→256) → ReLU
+                                                                ↓
+                                              PPO Actor-Critic (256 features)
+                                                  ├── Actor   → Action(3,)  [steer, throttle, brake]
+                                                  └── Critic  → Value scalar
+```
 
-CARLA itself is CPU-bound; the policy network is what uses the GPU.
+**VecNormalize** is applied to the `state` vector and rewards only — the image is left un-normalized to preserve CNN learning.
 
 ---
 
-## 3. Installation
+## Curriculum
 
-### 3.1. CARLA simulator
+| Phase | Town   | NPCs | Steps         | Goal |
+|-------|--------|------|---------------|------|
+| `p1`  | Town01 | 0    | 0 → 1 M       | Lane-keeping + steady speed |
+| `p2`  | Town01 | 10   | 1 M → 1.7 M   | Adapt to traffic on familiar map |
+| `p3`  | Town03 | 0    | 1.7 M → 2.5 M | Generalize to harder urban layout |
+| `p4`  | Town03 | 10   | 2.5 M → 3.5 M | Combined: new map + traffic |
 
-Download CARLA 0.9.15 (or later) from the official releases page.
+Each phase runs in a fresh CARLA process (user-controlled restart) to avoid `load_world()` crashes on laptop hardware.
 
-Unzip and verify you can run `CarlaUE4.exe` (Windows) or `./CarlaUE4.sh` (Linux).
+---
 
-### 3.2. Python environment
+## Quick Start
 
+### 1. Install CARLA
+
+Download CARLA 0.9.15 from the [official releases page](https://github.com/carla-simulator/carla/releases). Unzip and install the Python API wheel:
+
+```bash
+pip install <CARLA>/PythonAPI/carla/dist/carla-0.9.15-cp311-cp311-win_amd64.whl
 ```
+
+### 2. Install Python dependencies
+
+```bash
 python -m venv carla_rl_env
-```
-
-Activate it.
-
-Windows (PowerShell):
-```
+# Windows
 carla_rl_env\Scripts\Activate.ps1
-```
-
-Linux / macOS:
-```
+# Linux
 source carla_rl_env/bin/activate
-```
 
-### 3.3. Install dependencies
-
-```
 pip install -r requirements.txt
 ```
 
-You also need the CARLA Python API (`carla` package) matching your CARLA build. It usually ships inside the CARLA install at `PythonAPI/carla/dist/`. Install the wheel that matches your Python version, e.g.:
+### 3. Launch CARLA (headless)
 
-```
-pip install <CARLA>/PythonAPI/carla/dist/carla-0.9.15-cp310-cp310-win_amd64.whl
-```
-
----
-
-## 4. Start CARLA (headless)
-
-CARLA must be running BEFORE training is started. Always launch it in headless mode to keep GPU load on the policy, not on Unreal rendering.
-
-Windows:
-```
+```bash
+# Windows
 CarlaUE4.exe -RenderOffScreen -quality-level=Low
-```
 
-Linux:
-```
+# Linux
 ./CarlaUE4.sh -RenderOffScreen -quality-level=Low
 ```
 
-No window is shown. The server listens on `localhost:2000` by default.
+Wait for the server log to settle before starting training.
 
-If your machine has multiple GPUs, you can pin CARLA to a specific one with `-graphicsadapter=N`.
+### 4. Train
 
----
-
-## 5. Training
-
-All commands below are run from the project root: `D:\RL\carla_rl_project_v3`.
-
-### 5.1. First-time training
-
-```
-python training/train.py
+```bash
+python training/train.py --phase p1     # 0 → 1M steps, Town01, no NPCs
 ```
 
-What happens:
+When `p1` completes: **close and reopen CARLA**, then:
 
-1. Reads `configs/training.yaml` (PPO hyperparameters + total step budget).
-2. Reads `configs/environment.yaml` (sync delta, camera resolution, max episode steps).
-3. Reads `configs/curriculum.yaml` (town / weather / traffic schedule).
-4. Connects to CARLA at `localhost:2000` and switches the world into synchronous mode at `fixed_delta_seconds = 0.05` (20 Hz).
-5. Spawns ego vehicle, RGB camera, and collision sensor; spawns NPC traffic per the current curriculum phase.
-6. Trains PPO. Checkpoints are saved every `checkpoint_freq` steps (default 500k).
-
-The script returns when `total_steps` (default 5,000,000) is reached.
-
-### 5.2. Monitor in TensorBoard
-
-In a separate terminal:
-
+```bash
+python training/train.py --phase p2     # 1M → 1.7M
+# close/reopen CARLA
+python training/train.py --phase p3     # 1.7M → 2.5M  (Town03)
+# close/reopen CARLA
+python training/train.py --phase p4     # 2.5M → 3.5M
 ```
+
+Press `Ctrl+C` at any time to save and exit. Re-running the same phase command resumes automatically from the latest checkpoint.
+
+### 5. Monitor
+
+```bash
 tensorboard --logdir logs
+# open http://localhost:6006
 ```
-
-Open `http://localhost:6006`. or python -m tensorboard.main --logdir logs Watch:
-
-- `rollout/ep_rew_mean` and `rollout/ep_len_mean` (learning signal)
-- `train/loss`, `train/policy_gradient_loss`, `train/value_loss` (stability)
-- `train/clip_fraction`, `train/approx_kl` (PPO health, KL should stay <~0.03)
-
-### 5.3. Stop training safely
-
-Press `Ctrl + C` in the training terminal. The latest checkpoint on disk is intact; in-progress rollout is discarded.
-
-### 5.4. Resume training
-
-```
-python training/resume.py
-```
-
-This:
-
-- Loads `checkpoints/latest` (the PPO model).
-- Loads `checkpoints/vecnormalize.pkl` (observation/reward statistics).
-- Restores `num_timesteps` so curriculum picks up at the right phase.
-- Reattaches the checkpoint callback (saves continue).
-- Continues writing TensorBoard logs to `logs/`.
-- Trains until `total_steps` is reached.
-
-Never load `checkpoints/latest.zip` without `vecnormalize.pkl` -- the agent's input distribution would shift and effectively erase what it has learned.
 
 ---
 
-## 6. Configuration
+## Reward Function
 
-### 6.1. `configs/training.yaml`
+| Term | Formula | Range |
+|---|---|---|
+| Progress | `0.10 × clamp(speed, 0, 15)` | 0 to +1.5 |
+| Speed tracking | `0.05 × (1 − |speed−6| / 6)` or `−0.10` if stationary | −0.10 to +0.05 |
+| Steer magnitude | `−0.05 × |steer| × speed_scale` | −0.05 to 0 |
+| Steer rate | `−0.05 × (steer − prev_steer)² × speed_scale` | −0.20 to 0 |
+| Lane deviation | `−0.20 × (lat_dist / 1.75)² × speed_scale` | −0.80 to 0 |
+| NPC proximity | `−0.20 × (1 − dist / 8)` when within 8 m | −0.20 to 0 |
+| Terminal | `−100` on collision / off-road / stuck-timeout | −100 or 0 |
+
+`speed_scale = min(speed / 6, 1)` — penalties scale toward zero at low speed so the agent is not punished before it has learned to move.
+
+Set `DEBUG_REWARD=1` to print per-step reward breakdown to stdout.
+
+---
+
+## Episode Termination
+
+| Condition | Type |
+|---|---|
+| Collision sensor fires | `terminated` |
+| No driving-lane waypoint under vehicle (off-road) | `terminated` |
+| Speed < 0.5 m/s for 200 consecutive ticks (10 s) | `terminated` |
+| 1000 steps reached | `truncated` |
+
+---
+
+## PPO Hyperparameters
 
 ```yaml
-total_steps: 5000000        # full training budget
-checkpoint_freq: 500000     # save every 500k env steps
-
-ppo:
-  learning_rate: 0.0003
-  n_steps: 2048
-  batch_size: 256
-  gamma: 0.99
-  gae_lambda: 0.95
-  clip_range: 0.2
+learning_rate:  0.0001
+n_steps:        2048
+batch_size:     256
+n_epochs:       4
+gamma:          0.99
+gae_lambda:     0.95
+clip_range:     0.2
+ent_coef:       0.005
+target_kl:      0.02
+max_grad_norm:  0.5
+checkpoint_freq: 50000
 ```
-
-### 6.2. `configs/environment.yaml`
-
-```yaml
-host: localhost
-port: 2000
-
-fixed_delta_seconds: 0.05    # 20 Hz sim, sync mode
-max_episode_steps: 1000      # truncation length
-
-camera:
-  width: 128
-  height: 128
-  fov: 90
-```
-
-### 6.3. `configs/curriculum.yaml`
-
-Phases are matched by `step <= until_step`. Edit between runs as you see fit.
-
-```yaml
-phases:
-  - until_step: 1000000
-    towns:   ["Town01"]
-    weather: ["ClearNoon"]
-    traffic: 0
-
-  - until_step: 3000000
-    towns:   ["Town01", "Town03"]
-    weather: ["ClearNoon", "CloudyNoon", "WetNoon"]
-    traffic: 20
-
-  - until_step: 5000000
-    towns:   ["Town01", "Town02", "Town03", "Town05"]
-    weather: ["ClearNoon", "CloudyNoon", "WetNoon", "SoftRainNoon"]
-    traffic: 50
-```
-
-Town / weather / traffic are re-sampled at each episode reset, never mid-rollout.
 
 ---
 
-## 7. Episode termination
+## Project Layout
 
-Episodes end on the first of:
-
-- **Collision** (terminated): collision sensor fires.
-- **Off-road** (terminated): the vehicle's location has no driving-lane waypoint under it.
-- **Step limit** (truncated): `max_episode_steps` reached.
-
-On every reset, all previously spawned actors (ego vehicle, camera, collision sensor, NPCs) are batch-destroyed before new ones are created. The world is only reloaded when the curriculum picks a different town than the previous episode.
+```
+carla_rl_project_v3/
+├── configs/
+│   ├── curriculum.yaml        # 4-phase training schedule
+│   ├── environment.yaml       # CARLA host/port, sync rate, camera, episode settings
+│   └── training.yaml          # PPO hyperparameters
+├── env/
+│   ├── carla_env.py           # Gymnasium wrapper: step, reset, termination, video
+│   ├── reward.py              # Per-step reward computation
+│   ├── observation.py         # Image preprocessing (resize → grayscale → normalize)
+│   ├── frame_stack.py         # 4-frame temporal stacking
+│   └── weather_manager.py     # Weather preset application
+├── agents/
+│   └── feature_extractor.py   # MultiModalExtractor: CNN + MLP → 256 features
+├── training/
+│   ├── train.py               # Main entry point: --phase pN, auto-resume
+│   ├── callbacks.py           # CheckpointCallback (50k steps + exit save)
+│   └── evaluate.py            # Evaluation script
+├── tools/
+│   └── collect_samples.py     # Step-by-step visualization with state CSV
+├── logs/
+│   ├── monitor.csv            # Episode reward/length history
+│   ├── PPO_0/                 # TensorBoard event files
+│   └── videos/
+│       ├── Town01-1.mp4       # Demo: Town01 (phases 1–2)
+│       └── town03-1.mp4       # Demo: Town03 (phases 3–4)
+└── requirements.txt
+```
 
 ---
 
-## 8. Observation and action spaces
+## Hardware Requirements
 
-**Observation (Dict):**
+| Component | Recommended |
+|---|---|
+| GPU | RTX 4060 8 GB (or equivalent) |
+| RAM | 16 GB |
+| Disk | SSD, ~10 GB free |
+| OS | Windows 10/11 or Linux |
 
-- `image`: `Box(0, 1, shape=(4, 84, 84), float32)` -- 4-frame grayscale stack
-- `state`: `Box(-inf, +inf, shape=(1,), float32)` -- planar speed in m/s
+VRAM budget breakdown on 8 GB:
+- Headless CARLA (Town01, no NPCs, Low quality): 3–4 GB
+- Headless CARLA (Town03 + 10 NPCs, Low quality): 4.5–5.5 GB
+- PPO model + rollout buffer: ~0.5 GB
 
-**VecNormalize:** normalizes `state` and rewards only. The image is left untouched (running statistics on pixels would corrupt vision learning).
-
-**Action (Box, shape=(3,)):**
-
-- `steer` in `[-1, 1]`
-- `throttle` in `[0, 1]`
-- `brake` in `[0, 1]`
-
----
-
-## 9. Expected progression
-
-| Phase          | Steps      | Capability               |
-|----------------|------------|--------------------------|
-| Early          | 0 - 500k   | Random / jerky driving   |
-| Learning       | 500k - 1.5M| Lane following emerging  |
-| Stable         | 1.5M - 3M  | Smooth steering, traffic-aware |
-| Generalization | 3M - 5M    | Multi-town, multi-weather |
-
-Numbers are typical, not guaranteed; reward shaping and CARLA build version both shift the curve.
+**Single environment only.** A second `CarlaEnv` would require a second CARLA instance and exceeds the VRAM budget.
 
 ---
 
-## 10. Common mistakes
+## Common Issues
 
-- Starting `train.py` before CARLA is up. The client times out after 20 s.
-- Deleting `vecnormalize.pkl`. Resume cannot recover observation stats; re-train from scratch.
-- Editing the observation space (image size, channels, state dims) and resuming an old checkpoint. Shape mismatch -- start fresh.
-- Running multiple training scripts against the same CARLA server. The world becomes inconsistent.
-- Launching CARLA without `-RenderOffScreen` on a laptop. Unreal will fight your policy for the GPU.
-
----
-
-## 11. Troubleshooting
-
-**`ModuleNotFoundError: env`**
-Run from the project root: `python training/train.py` (the script bootstraps `sys.path`). Do not `cd training` first.
-
-**`RuntimeError: Camera produced no image after 40 ticks`**
-CARLA is not in synchronous mode, the camera failed to attach, or the server is overloaded. Restart CARLA with `-RenderOffScreen -quality-level=Low` and try again.
-
-**Training hangs at `world.tick()`**
-Another client is connected and also driving the world. Make sure only one trainer talks to the server.
-
-**`time-out of 20000ms while waiting for the simulator`**
-CARLA is not running on `localhost:2000`, or it is still loading the map. Wait for the CARLA logs to settle, then start training.
-
-**GPU OOM**
-Lower `camera.width/height` in `environment.yaml` (the policy CNN still receives 84x84 grayscale, but the CARLA -> Python transfer becomes cheaper). Or lower PPO `batch_size`.
+| Error | Fix |
+|---|---|
+| `time-out of 20000ms` | CARLA isn't running or still loading. Wait for server log to settle. |
+| `Camera produced no image after 40 ticks` | Restart CARLA with `-RenderOffScreen -quality-level=Low`. |
+| Training hangs at `world.tick()` | Another client is connected. Only one trainer per server. |
+| GPU OOM in p3/p4 | Lower NPC count in `curriculum.yaml`; confirm `-quality-level=Low`. |
+| `Phase 'pX' not found` | Phase name in `--phase` doesn't match any `name:` entry in `curriculum.yaml`. |
+| `ModuleNotFoundError: env` | Run from project root: `python training/train.py`, not `cd training && python train.py`. |
+| Stale checkpoint after changing state vector size | Delete `checkpoints/` and retrain from p1. Old zip files are incompatible with new input shape. |
 
 ---
 
-## 12. Stopping and clean shutdown
+## License
 
-Press `Ctrl + C`. The env's `close()` will:
-
-- Destroy all spawned actors.
-- Disable synchronous mode on the world and traffic manager.
-
-Leave CARLA running if you intend to resume; restart it only if it has accumulated stale state.
-
----
-
-## 13. Next experiments (after 5M steps)
-
-- Evaluation script with deterministic policy on held-out towns
-- Richer reward (lane-center deviation, jerk penalty, target speed tracking)
-- Lane-invasion sensor as soft-termination signal
-- More complex traffic and pedestrian scenarios
-- Domain randomization (camera noise, sun position, fog)
-- Imitation pretraining from a CARLA expert agent
-
-===============================================================================================================
-===============================================================================================================
-===============================================================================================================
-
-# more episodes for a reliable average
-python training/evaluate.py --episodes 20
-
-# test on a town the agent wasn't trained on yet (generalization test)
-python training/evaluate.py --town Town02 --episodes 15
-
-# add traffic to stress-test the agent
-python training/evaluate.py --traffic 20 --episodes 10
-
-# test a specific checkpoint, not the latest
-python training/evaluate.py --checkpoint checkpoints/model_500000.zip
-
-# save results to logs/eval_<timestamp>.json for later comparison
-python training/evaluate.py --episodes 20 --record
-
-===============================================================================================================
-===============================================================================================================
-===============================================================================================================
----
-
-## 14. Phase 2 training (after Phase 1 completes at 1M)
-
-Phase 1 (`training/train.py` / `training/resume.py`) runs Town01-only up to `total_steps`
-in `configs/training.yaml`. When Phase 1 is finished, you have:
-
-- `checkpoints/phase1_final.zip` -- the locked Phase 1 policy
-- `checkpoints/vecnormalize_phase1.pkl` -- matching observation/reward stats
-
-**Do not overwrite these.** Phase 2 reads from them but writes to a separate directory.
-
-### 14.1. Why Phase 2 is split off
-
-The original `configs/curriculum.yaml` mixes Town01 and Town03 in Phase 2. With random
-town selection every reset, CARLA calls `world.load_world(...)` on roughly every other
-episode. After ~1M cumulative steps, the UE4 server's memory leak from repeated map
-reloads brings the simulator down. Symptoms:
-
-```
-INFO: streaming client: connection failed: No connection could be made...
-```
-
-The Phase 2 setup avoids this by running **one town per training run**. You train
-Town01 to convergence, then switch to Town03 in a new run that resumes from the
-Town01 checkpoint.
-
-### 14.2. Phase 2 files
-
-| File                                       | Purpose                                         |
-|--------------------------------------------|-------------------------------------------------|
-| `configs/training_phase2.yaml`             | Phase 2 hyperparams (lower LR for fine-tuning)  |
-| `configs/curriculum_phase2_town01.yaml`    | Town01 only, weather variety, 20 NPCs           |
-| `configs/curriculum_phase2_town03.yaml`    | Town03 only, weather variety, 20 NPCs           |
-| `training/train_phase2.py`                 | Phase 2 entry point (seeds + resumes)           |
-| `checkpoints_phase2/`                      | Phase 2 checkpoints (auto-created)              |
-| `logs_phase2/`                             | Phase 2 TensorBoard logs (auto-created)         |
-
-### 14.3. Running Phase 2
-
-**First run -- Town01 with traffic and weather variety:**
-
-```
-python training/train_phase2.py --curriculum configs/curriculum_phase2_town01.yaml
-```
-
-The script:
-
-1. Detects no checkpoint in `checkpoints_phase2/`, so seeds from
-   `checkpoints/phase1_final.zip` + `vecnormalize_phase1.pkl`.
-2. Continues `num_timesteps` from 1,000,000 onward.
-3. Saves a checkpoint every 25,000 steps to `checkpoints_phase2/model_<steps>.zip`.
-4. Writes TensorBoard logs to `logs_phase2/`.
-
-Let it run until you're happy with the Town01 performance (e.g. step ~2,000,000), then
-`Ctrl + C`.
-
-**Second run -- switch to Town03 (continues from latest Phase 2 checkpoint):**
-
-```
-python training/train_phase2.py --curriculum configs/curriculum_phase2_town03.yaml
-```
-
-This automatically resumes from the highest `model_*.zip` in `checkpoints_phase2/`, so
-the policy keeps its Phase 2 progress and only the town/weather/traffic changes.
-
-### 14.4. TensorBoard for Phase 2
-
-In a separate terminal:
-
-```
-tensorboard --logdir logs_phase2
-```
-
-Compare to Phase 1 (`tensorboard --logdir logs`) side by side by running two
-TensorBoard instances on different ports, or run `tensorboard --logdir_spec=p1:logs,p2:logs_phase2`.
-
-### 14.5. Phase 2 stopping rules
-
-- `ep_rew_mean` should initially **dip** when you swap to Town03 (new map, unseen
-  geometry). It should recover within ~100-200k steps if the policy generalizes.
-- If `value_loss` spikes and stays high beyond ~50k steps after the town switch,
-  the new town is too different; consider lowering `learning_rate` to 2e-5 or
-  warming up with more Town01 first.
-- If `clip_fraction` climbs above ~0.25 sustained, that's the policy thrashing on
-  the new objective -- raise `n_steps` (smoother gradient) or lower the LR.
-
-### 14.6. Phase 2 safety rules
-
-- **Never** delete `checkpoints/phase1_final.zip` or `checkpoints/vecnormalize_phase1.pkl`.
-  Phase 2 only seeds from them on the first run, but they are your only fallback
-  if Phase 2 diverges.
-- **Never** train Phase 2 with a curriculum that lists more than one town. The whole
-  reason for splitting Phase 2 is to avoid mid-run `load_world()` thrashing.
-- If CARLA dies during a Phase 2 run, simply restart CARLA and re-run the same
-  `train_phase2.py` command -- it auto-resumes from the latest `checkpoints_phase2/`
-  snapshot.
-- Lower the `checkpoint_freq` in `configs/training_phase2.yaml` further (e.g. to
-  10,000) if Phase 2 is on a town that crashes CARLA more often -- shorter checkpoint
-  intervals = less lost work per crash.
+This project is for academic/research purposes. CARLA simulator is subject to its own [license](https://carla.org/).

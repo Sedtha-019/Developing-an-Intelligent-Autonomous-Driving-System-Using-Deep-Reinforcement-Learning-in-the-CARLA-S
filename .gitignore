@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+carla_rl_env/
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Checkpoints — model weights and normalizer stats (too large for git)
+checkpoints/
+checkpoints_2.5M_old/
+
+# Old training logs
+logs_2.5M_old/
+
+# TensorBoard event files (binary, large)
+logs/PPO_0/
+
+# Sample visualization frames
+logs/samples/
+
+# Videos — all except the two demo clips
+logs/videos/*.mp4
+!logs/videos/Town01-1.mp4
+!logs/videos/town03-1.mp4
+
+# Untracked report drafts (thesis-internal, not part of the codebase)
+REPORT_CHAPTER2.md
+REPORT_CHAPTER4.md
+THESIS_BRIEF.md
+README_v2.md
