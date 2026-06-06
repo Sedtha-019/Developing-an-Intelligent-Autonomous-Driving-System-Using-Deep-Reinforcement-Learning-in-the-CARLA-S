@@ -10,11 +10,11 @@ End-to-end PPO agent for autonomous driving in CARLA 0.9.15. Learns directly fro
 
 **Town01 — Phase 1 & 2** (lane-keeping + traffic on simple map)
 
-<video src="https://github.com/user-attachments/assets/3d81cc0a-5d63-4f69-ba5e-7b48e46b967d" controls width="720"></video>
+![Town01 demo](logs/videos/Town01-1.gif)
 
 **Town03 — Phase 3 & 4** (generalization to complex urban layout + traffic)
 
-<video src="https://github.com/user-attachments/assets/786543f5-8239-418e-95a9-db39103bffa3" controls width="720"></video>
+![Town03 demo](logs/videos/town03-1.gif)
 
 > Agent is running the learned policy — no autopilot.
 
