@@ -45,10 +45,10 @@ MultiModalExtractor
 
 | Phase | Town   | NPCs | Steps         | Goal |
 |-------|--------|------|---------------|------|
-| `p1`  | Town01 | 0    | 0 → 1 M       | Lane-keeping + steady speed |
-| `p2`  | Town01 | 10   | 1 M → 1.7 M   | Adapt to traffic on familiar map |
-| `p3`  | Town03 | 0    | 1.7 M → 2.5 M | Generalize to harder urban layout |
-| `p4`  | Town03 | 10   | 2.5 M → 3.5 M | Combined: new map + traffic |
+| `p1`  | Town01 | 0    | 0 → 2 M       | Lane-keeping + steady speed |
+| `p2`  | Town01 | 10   | 2 M → 2.7 M   | Adapt to traffic on familiar map |
+| `p3`  | Town03 | 0    | 2.7 M → 3.7 M | Generalize to harder urban layout |
+| `p4`  | Town03 | 10   | 3.7 M → 4.3 M | Combined: new map + traffic |
 
 Each phase runs in a fresh CARLA process (user-controlled restart) to avoid `load_world()` crashes on laptop hardware.
 
