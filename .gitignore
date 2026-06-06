@@ -12,6 +12,9 @@ carla_rl_env/
 venv/
 .venv/
 
+# Claude Code local config
+.claude/
+
 # IDE
 .vscode/
 .idea/
